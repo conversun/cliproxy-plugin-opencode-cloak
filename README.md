@@ -98,7 +98,7 @@ library on the **same OS/arch** as the host that loads it.
 2. Set `plugins.enabled: true`.
 3. Enable it under `plugins.configs.opencode-cloak` (see Configuration).
 
-> ABI: the plugin targets CLIProxyAPI plugin ABI v1 (pinned to SDK v7.2.19) and loads into any host that speaks ABI v1.
+> ABI: the plugin targets CLIProxyAPI plugin ABI v1 (built against SDK v7.2.96) and loads into any host that speaks ABI v1.
 
 ## ⚠️ Terms of Service / Risk
 

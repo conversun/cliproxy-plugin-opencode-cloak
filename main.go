@@ -180,8 +180,8 @@ func pluginRegistration() registration {
 		Metadata: pluginapi.Metadata{
 			Name:             "opencode-cloak",
 			Version:          "0.1.0",
-			Author:           "cyonsun",
-			GitHubRepository: "",
+			Author:           "conversun",
+			GitHubRepository: "https://github.com/conversun/cliproxy-plugin-opencode-cloak",
 			Logo:             "",
 			ConfigFields: []pluginapi.ConfigField{
 				{
