@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+            ext: so
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            ext: so
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+            ext: dylib
+          - runner: macos-13
+            os: darwin
+            arch: amd64
+            ext: dylib
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build shared library (native ${{ matrix.os }}/${{ matrix.arch }})
+        run: |
+          out="opencode-cloak-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.ext }}"
+          CGO_ENABLED=1 go build -buildmode=c-shared -o "$out" .
+          ls -la "$out"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: opencode-cloak-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.ext }}
+          fail_on_unmatched_files: true

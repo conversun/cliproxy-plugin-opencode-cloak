@@ -59,29 +59,46 @@ plugins:
 
 **`cch` re-signing.** On OAuth message requests, CLIProxyAPI re-signs the billing header's `cch` field itself (a seeded hash over the final body), so the plugin's `cch` is authoritative only for `count_tokens`. The durable value of this plugin is the surgical system-prompt preservation (native cloaking would otherwise replace the whole opencode prompt with a 3-line stub) plus the `cc_version`/suffix/`cc_entrypoint` fingerprint.
 
-## Build & Install
+## Install
 
-Build the shared library:
+### Option A - Prebuilt binary (recommended)
+
+Every release ships prebuilt shared libraries built by CI for common platforms:
+`opencode-cloak-linux-amd64.so`, `opencode-cloak-linux-arm64.so`,
+`opencode-cloak-darwin-arm64.dylib`, `opencode-cloak-darwin-amd64.dylib`.
+
+Download the one matching your server from the
+[Releases page](https://github.com/conversun/cliproxy-plugin-opencode-cloak/releases),
+rename it to `opencode-cloak.<ext>` (keep the basename `opencode-cloak` - it becomes the
+plugin ID), and place it in the directory named by `plugins.dir`:
 
 ```bash
-make build
+mkdir -p /opt/cliproxy/plugins
+curl -L -o /opt/cliproxy/plugins/opencode-cloak.so \
+  https://github.com/conversun/cliproxy-plugin-opencode-cloak/releases/latest/download/opencode-cloak-linux-amd64.so
 ```
 
-Or build directly:
+### Option B - Build from source
+
+No local CLIProxyAPI checkout is required: the plugin depends on the **public** SDK module
+(`github.com/router-for-me/CLIProxyAPI/v7`), so a plain build works anywhere (Go 1.26+, CGO enabled):
 
 ```bash
-# macOS
-go build -buildmode=c-shared -o bin/opencode-cloak.dylib .
-
-# Linux: use .so, Windows: use .dll
-go build -buildmode=c-shared -o bin/opencode-cloak.so .
+git clone https://github.com/conversun/cliproxy-plugin-opencode-cloak.git
+cd cliproxy-plugin-opencode-cloak
+make build   # or: CGO_ENABLED=1 go build -buildmode=c-shared -o bin/opencode-cloak.so .
 ```
 
-Install:
+`make build` selects the extension per OS (`.so` Linux, `.dylib` macOS, `.dll` Windows). Build the
+library on the **same OS/arch** as the host that loads it.
 
-1. Place the built library in the directory named by `plugins.dir` in your CLIProxyAPI config. The file basename becomes the plugin ID, so keep it `opencode-cloak`.
+### Enable it
+
+1. Place the library in the directory named by `plugins.dir` (basename stays `opencode-cloak`).
 2. Set `plugins.enabled: true`.
-3. Enable the plugin under `plugins.configs.opencode-cloak` as shown in the Configuration section.
+3. Enable it under `plugins.configs.opencode-cloak` (see Configuration).
+
+> ABI: the plugin targets CLIProxyAPI plugin ABI v1 (pinned to SDK v7.2.19) and loads into any host that speaks ABI v1.
 
 ## ⚠️ Terms of Service / Risk
 
