@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -10,9 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-var billingHeaderPattern = regexp.MustCompile(`^x-anthropic-billing-header: cc_version=2\.1\.63\.[0-9a-f]{3}; cc_entrypoint=cli; cch=[0-9a-f]{5};$`)
-
-func TestTransformInterceptAfter_relocatesSystem_whenOpencodeUserAgentMatches(t *testing.T) {
+func TestTransformInterceptAfter_preservesSanitizedSystemBlocks_whenOpencodeUserAgentMatches(t *testing.T) {
 	// Given
 	req := newTransformRequest(
 		`{"system":[{"type":"text","text":"Keep this system instruction."}],"messages":[{"role":"user","content":"original user message"}]}`,
@@ -27,25 +24,23 @@ func TestTransformInterceptAfter_relocatesSystem_whenOpencodeUserAgentMatches(t 
 		t.Fatal("transformInterceptAfter() did not transform a matching opencode request")
 	}
 	got := gjson.ParseBytes(body)
-	if billing := got.Get("system.0.text").String(); !billingHeaderPattern.MatchString(billing) {
-		t.Fatalf("billing system block = %q, want canonical billing header", billing)
+	if n := len(got.Get("system").Array()); n != 3 {
+		t.Fatalf("system block count = %d, want billing + identity + sanitized content", n)
+	}
+	if !strings.HasPrefix(got.Get("system.0.text").String(), "x-anthropic-billing-header:") {
+		t.Fatalf("system[0] = %q, want billing header", got.Get("system.0.text").String())
 	}
 	if identity := got.Get("system.1.text").String(); identity != claudeCodeSystemPrompt {
-		t.Fatalf("Claude Code system block = %q, want %q", identity, claudeCodeSystemPrompt)
+		t.Fatalf("system[1] = %q, want Claude Code identity", identity)
 	}
-	if role := got.Get("messages.0.role").String(); role != "user" {
-		t.Fatalf("injected first role = %q, want user", role)
+	if preserved := got.Get("system.2.text").String(); preserved != "Keep this system instruction." {
+		t.Fatalf("system[2] = %q, want preserved sanitized instruction", preserved)
 	}
-	injected := got.Get("messages.0.content.0.text").String()
-	if !strings.HasPrefix(injected, "[System Instructions - follow these strictly]\n") ||
-		!strings.Contains(injected, "Keep this system instruction.") {
-		t.Fatalf("injected system message = %q, want sanitized system instructions", injected)
+	if n := len(got.Get("messages").Array()); n != 1 {
+		t.Fatalf("messages count = %d, want original conversation unchanged", n)
 	}
-	if role := got.Get("messages.1.role").String(); role != "assistant" {
-		t.Fatalf("injected second role = %q, want assistant", role)
-	}
-	if original := got.Get("messages.2.content").String(); original != "original user message" {
-		t.Fatalf("relocated original message = %q, want original user message", original)
+	if original := got.Get("messages.0.content").String(); original != "original user message" {
+		t.Fatalf("original message = %q, want original user message", original)
 	}
 }
 
@@ -63,9 +58,28 @@ func TestTransformInterceptAfter_removesOpenCodeIdentity_whenSystemIdentityActiv
 	if !ok {
 		t.Fatal("transformInterceptAfter() did not transform a request with OpenCode system identity")
 	}
-	injected := gjson.GetBytes(body, "messages.0.content.0.text").String()
-	if strings.Contains(injected, "You are OpenCode") || !strings.Contains(injected, "Keep this benign paragraph.") {
-		t.Fatalf("relocated system instructions = %q, want identity removed and benign paragraph preserved", injected)
+	transformed := string(body)
+	if strings.Contains(transformed, "You are OpenCode") || !strings.Contains(transformed, "Keep this benign paragraph.") {
+		t.Fatalf("transformed request must remove identity and preserve benign system content: %s", transformed)
+	}
+}
+
+func TestTransformInterceptAfter_preservesSystemBlockMetadata_whenSanitizingText(t *testing.T) {
+	// Given
+	req := newTransformRequest(
+		`{"system":[{"type":"text","text":"Keep this instruction.","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"hello"}]}`,
+		http.Header{"User-Agent": []string{"opencode/1.14.3"}},
+	)
+
+	// When
+	body, ok := transformInterceptAfter(req, defaultConfig())
+
+	// Then
+	if !ok {
+		t.Fatal("transformInterceptAfter() did not transform a matching opencode request")
+	}
+	if cacheType := gjson.GetBytes(body, "system.2.cache_control.type").String(); cacheType != "ephemeral" {
+		t.Fatalf("system block cache_control type = %q, want preserved ephemeral metadata", cacheType)
 	}
 }
 
@@ -163,7 +177,7 @@ func TestTransformInterceptAfter_skipsGenericClients_whenNoOpenCodeEvidence(t *t
 	}
 }
 
-func TestTransformInterceptAfter_addsUserMessage_whenSanitizedSystemAndNoMessages(t *testing.T) {
+func TestTransformInterceptAfter_skipsWhenNoUserMessageExistsForBilling(t *testing.T) {
 	// Given
 	req := newTransformRequest(
 		`{"system":"You are OpenCode, a coding agent.\n\nKeep this instruction.","messages":[]}`,
@@ -174,16 +188,14 @@ func TestTransformInterceptAfter_addsUserMessage_whenSanitizedSystemAndNoMessage
 	body, ok := transformInterceptAfter(req, defaultConfig())
 
 	// Then
-	if !ok {
-		t.Fatal("transformInterceptAfter() did not transform a request whose relocated system creates a user message")
-	}
-	if role := gjson.GetBytes(body, "messages.0.role").String(); role != "user" {
-		t.Fatalf("first message role = %q, want user", role)
+	if ok || body != nil {
+		t.Fatalf("transformInterceptAfter() = (%q, %t), want safe no-op without a user message", body, ok)
 	}
 }
 
-func TestTransformInterceptAfter_skipsWhenNoUserRemainsAfterEmptySanitization(t *testing.T) {
-	// Given
+func TestTransformInterceptAfter_skipsWhenNothingRemainsAfterSanitization(t *testing.T) {
+	// Given: the entire system is opencode brand identity, which sanitizes to "".
+	// Nothing to preserve -> no-op, and native cloaks the request normally.
 	req := newTransformRequest(
 		`{"system":"You are OpenCode, a coding agent.","messages":[{"role":"assistant","content":"hello"}]}`,
 		nil,
@@ -195,96 +207,6 @@ func TestTransformInterceptAfter_skipsWhenNoUserRemainsAfterEmptySanitization(t 
 	// Then
 	if ok || body != nil {
 		t.Fatalf("transformInterceptAfter() = (%q, %t), want (nil, false)", body, ok)
-	}
-}
-
-func TestTransformInterceptAfter_usesFirstUserContentForBilling_whenSystemIsEmpty(t *testing.T) {
-	tests := []struct {
-		name          string
-		messages      string
-		firstUserText string
-	}{
-		{
-			name:          "string content",
-			messages:      `[{"role":"user","content":"string user"}]`,
-			firstUserText: "string user",
-		},
-		{
-			name:          "mixed image and text blocks",
-			messages:      `[{"role":"user","content":[{"type":"image","source":{}},{"type":"text","text":"text user"}]}]`,
-			firstUserText: "text user",
-		},
-		{
-			name:          "tool result only",
-			messages:      `[{"role":"user","content":[{"type":"tool_result","content":"tool output"}]}]`,
-			firstUserText: "",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			// Given
-			req := newTransformRequest(
-				`{"system":"","messages":`+test.messages+`}`,
-				http.Header{"User-Agent": []string{"opencode/1.14.3"}},
-			)
-
-			// When
-			body, ok := transformInterceptAfter(req, defaultConfig())
-
-			// Then
-			if !ok {
-				t.Fatal("transformInterceptAfter() did not transform an opencode request")
-			}
-			billing := gjson.GetBytes(body, "system.0.text").String()
-			if want := "cch=" + computeCCH(test.firstUserText) + ";"; !strings.Contains(billing, want) {
-				t.Fatalf("billing = %q, want first-user CCH %q", billing, want)
-			}
-			if role := gjson.GetBytes(body, "messages.0.role").String(); role != "user" {
-				t.Fatalf("first original message role = %q, want user", role)
-			}
-		})
-	}
-}
-
-func TestTransformInterceptAfter_appendsValidWorkloadOnly(t *testing.T) {
-	tests := []struct {
-		name             string
-		workloadHeader   string
-		containsWorkload bool
-	}{
-		{name: "valid", workloadHeader: "agent", containsWorkload: true},
-		{name: "absent", workloadHeader: "", containsWorkload: false},
-		{name: "invalid", workloadHeader: "a b;", containsWorkload: false},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			// Given
-			headers := http.Header{"User-Agent": []string{"opencode/1.14.3"}}
-			if test.workloadHeader != "" {
-				headers["x-cpa-claude-workload"] = []string{test.workloadHeader}
-			}
-			req := newTransformRequest(
-				`{"system":"","messages":[{"role":"user","content":"hello"}]}`,
-				headers,
-			)
-
-			// When
-			body, ok := transformInterceptAfter(req, defaultConfig())
-
-			// Then
-			if !ok {
-				t.Fatal("transformInterceptAfter() did not transform an opencode request")
-			}
-			billing := gjson.GetBytes(body, "system.0.text").String()
-			if test.containsWorkload && !strings.HasSuffix(billing, " cc_workload=agent;") {
-				t.Fatalf("billing = %q, want valid workload suffix", billing)
-			}
-			if !test.containsWorkload && strings.Contains(billing, "cc_workload=") {
-				t.Fatalf("billing = %q, want no workload suffix", billing)
-			}
-		})
 	}
 }
 

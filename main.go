@@ -187,12 +187,12 @@ func pluginRegistration() registration {
 				{
 					Name:        "claude_code_version",
 					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Claude Code version stamped into the billing header; must match CLIProxyAPI's outgoing UA version.",
+					Description: "Claude Code version used in the billing header; must match CLIProxyAPI's outgoing User-Agent.",
 				},
 				{
 					Name:        "entrypoint",
 					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "cc_entrypoint value (cli).",
+					Description: "Billing-header entrypoint; use cli with CLIProxyAPI's current X-App and User-Agent tuple.",
 				},
 				{
 					Name:        "opencode_ua_regex",

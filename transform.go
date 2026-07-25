@@ -25,8 +25,6 @@ var currentConfig atomic.Pointer[resolvedConfig]
 
 const claudeCodeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
 
-var workloadPattern = regexp.MustCompile("^[A-Za-z0-9._-]{1,64}$")
-
 // defaultConfig returns the built-in configuration used before any host
 // configuration is applied or when a user-supplied value is invalid.
 func defaultConfig() resolvedConfig {
@@ -47,7 +45,7 @@ func loadConfig() resolvedConfig {
 }
 
 // interceptBefore rewrites an execution request before credential selection.
-// Stub: real logic is added by a later task.
+// No-op: all cloaking happens after auth selection, in interceptAfter.
 func interceptBefore(raw []byte) ([]byte, error) {
 	return okEnvelope(pluginapi.RequestInterceptResponse{})
 }
@@ -75,11 +73,6 @@ type textBlock struct {
 	Text string `json:"text"`
 }
 
-type claudeMessage struct {
-	Role    string      `json:"role"`
-	Content []textBlock `json:"content"`
-}
-
 func headerGet(headers http.Header, key string) string {
 	for name, values := range headers {
 		if strings.EqualFold(name, key) && len(values) > 0 {
@@ -89,6 +82,11 @@ func headerGet(headers http.Header, key string) string {
 	return ""
 }
 
+// transformInterceptAfter aligns opencode requests to the current
+// opencode-anthropic-auth system layout: billing header, Claude Code identity,
+// then the sanitized original system blocks. The original conversation remains
+// untouched. CLIProxyAPI still owns user-id injection, outgoing headers, and
+// final-body cch re-signing.
 func transformInterceptAfter(req pluginapi.RequestInterceptRequest, cfg resolvedConfig) (result []byte, transformed bool) {
 	defer func() {
 		if recover() != nil {
@@ -101,13 +99,16 @@ func transformInterceptAfter(req pluginapi.RequestInterceptRequest, cfg resolved
 	}
 
 	system := gjson.GetBytes(req.Body, "system")
+
+	// Idempotent: never touch a request whose system already carries the billing
+	// header (native already ran, or a prior pass transformed this body).
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(firstSystemText(system))), "x-anthropic-billing-header") {
 		return nil, false
 	}
 
 	userAgent := headerGet(req.Headers, "User-Agent")
-	isClaudeCodeUserAgent := extractClaudeCodeVersionFromUserAgent(userAgent) != ""
-	if isClaudeCodeUserAgent && systemContainsText(system, claudeCodeSystemPrompt) {
+	// A genuine Claude Code request already looks correct — leave it alone.
+	if extractClaudeCodeVersionFromUserAgent(userAgent) != "" && systemContainsText(system, claudeCodeSystemPrompt) {
 		return nil, false
 	}
 
@@ -115,6 +116,8 @@ func transformInterceptAfter(req pluginapi.RequestInterceptRequest, cfg resolved
 	if model == "" {
 		model = req.RequestedModel
 	}
+	// Native cloaking skips system injection for haiku; mirror that so we never
+	// strip the prompt on a request native will leave uncloaked.
 	if strings.HasPrefix(strings.ToLower(model), "claude-3-5-haiku") {
 		return nil, false
 	}
@@ -125,35 +128,25 @@ func transformInterceptAfter(req pluginapi.RequestInterceptRequest, cfg resolved
 		return nil, false
 	}
 
-	out := append([]byte(nil), req.Body...)
-	sanitized := sanitizeSystemText(originalSystemText)
-	if sanitized != "" {
-		messages, ok := prependSystemMessages(out, sanitized)
-		if !ok {
-			return nil, false
-		}
-		out = messages
-	}
-
-	messages := gjson.GetBytes(out, "messages")
-	billing := buildBillingHeaderValue(messages, cfg.version, cfg.entrypoint)
-	if billing == "" || !hasUserMessage(messages) {
+	messages := gjson.GetBytes(req.Body, "messages")
+	if !hasUserMessage(messages) {
 		return nil, false
 	}
 
-	workload := headerGet(req.Headers, "X-CPA-Claude-Workload")
-	if workload != "" && workloadPattern.MatchString(workload) {
-		billing += " cc_workload=" + workload + ";"
+	billing := buildBillingHeaderValue(messages, cfg.version, cfg.entrypoint)
+	if billing == "" {
+		return nil, false
 	}
 
-	systemBytes, errMarshal := json.Marshal([]textBlock{
-		{Type: "text", Text: billing},
-		{Type: "text", Text: claudeCodeSystemPrompt},
-	})
+	blocks := []json.RawMessage{rawTextBlock(billing), rawTextBlock(claudeCodeSystemPrompt)}
+	blocks = append(blocks, sanitizeSystemBlocks(system)...)
+	encoded, errMarshal := json.Marshal(blocks)
 	if errMarshal != nil {
 		return nil, false
 	}
-	updated, errSet := sjson.SetRawBytes(out, "system", systemBytes)
+
+	out := append([]byte(nil), req.Body...)
+	updated, errSet := sjson.SetRawBytes(out, "system", encoded)
 	if errSet != nil {
 		return nil, false
 	}
@@ -208,58 +201,52 @@ func systemText(system gjson.Result) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func prependSystemMessages(body []byte, systemText string) ([]byte, bool) {
-	user, errMarshal := json.Marshal(claudeMessage{
-		Role: "user",
-		Content: []textBlock{{
-			Type: "text",
-			Text: "[System Instructions - follow these strictly]\n" + systemText,
-		}},
-	})
-	if errMarshal != nil {
-		return nil, false
+func rawTextBlock(text string) json.RawMessage {
+	raw, _ := json.Marshal(textBlock{Type: "text", Text: text})
+	return raw
+}
+
+func sanitizeSystemBlocks(system gjson.Result) []json.RawMessage {
+	if system.Type == gjson.String {
+		if text := sanitizeSystemText(system.String()); text != "" {
+			return []json.RawMessage{rawTextBlock(text)}
+		}
+		return nil
 	}
-	assistant, errMarshal := json.Marshal(claudeMessage{
-		Role: "assistant",
-		Content: []textBlock{{
-			Type: "text",
-			Text: "Understood. I will follow these instructions.",
-		}},
-	})
-	if errMarshal != nil {
-		return nil, false
+	if !system.IsArray() {
+		return nil
 	}
 
-	updated := []json.RawMessage{user, assistant}
-	messages := gjson.GetBytes(body, "messages")
-	if messages.IsArray() {
-		messages.ForEach(func(_, message gjson.Result) bool {
-			updated = append(updated, json.RawMessage(message.Raw))
+	blocks := make([]json.RawMessage, 0, int(system.Get("#").Int()))
+	system.ForEach(func(_, block gjson.Result) bool {
+		text := block.Get("text")
+		if text.Type != gjson.String {
 			return true
-		})
-	}
-	encoded, errMarshal := json.Marshal(updated)
-	if errMarshal != nil {
-		return nil, false
-	}
-	result, errSet := sjson.SetRawBytes(body, "messages", encoded)
-	if errSet != nil {
-		return nil, false
-	}
-	return result, true
+		}
+		sanitized := sanitizeSystemText(text.String())
+		if sanitized == "" {
+			return true
+		}
+		updated, errSet := sjson.Set(block.Raw, "text", sanitized)
+		if errSet == nil {
+			blocks = append(blocks, json.RawMessage(updated))
+		}
+		return true
+	})
+	return blocks
 }
 
 func hasUserMessage(messages gjson.Result) bool {
 	if !messages.IsArray() {
 		return false
 	}
-	userFound := false
+	found := false
 	messages.ForEach(func(_, message gjson.Result) bool {
 		if message.Get("role").String() == "user" {
-			userFound = true
+			found = true
 			return false
 		}
 		return true
 	})
-	return userFound
+	return found
 }

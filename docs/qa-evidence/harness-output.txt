@@ -8,16 +8,17 @@ User-Agent: opencode/1.14.30 (darwin; arm64)
   [1] # Help & Feedback\n\nReport issues at github.com/anomalyco/opencode or read the guide at opencode.ai/docs for more.
   [2] # Tool Usage\n\nUse the available tools to read and edit files. Prefer ripgrep for searching the codebase.
 
---- OUTPUT system[] (cloaked) ---
-  [0] x-anthropic-billing-header: cc_version=2.1.63.5da; cc_entrypoint=cli; cch=0a00b;
+--- OUTPUT system[] (billing + identity + sanitized originals) ---
+  [0] x-anthropic-billing-header: cc_version=2.1.63.041; cc_entrypoint=cli; cch=8ee91;
   [1] You are Claude Code, Anthropic's official CLI for Claude.
+  [2] You help users complete software engineering tasks efficiently.
+  [3] # Help & Feedback
+  [4] # Tool Usage\n\nUse the available tools to read and edit files. Prefer ripgrep for searching the codebase.
 
---- OUTPUT messages[] (relocated + original) ---
-  [0] role=user text="[System Instructions - follow these strictly]\nYou help users complete software engineering tasks efficiently.\n\n# Help & Feedback\n\n# Tool Usage\n\nUse the available tools to read and edit files. Prefer ripgrep for searching the codebase."
-  [1] role=assistant text="Understood. I will follow these instructions."
-  [2] role=user text="Refactor the auth module to use JWT sessions."
+--- OUTPUT messages[] (unchanged) ---
+  [0] role=user text="Refactor the auth module to use JWT sessions."
 ==========================================================
-RESULT: PASS — billing header well-formed, opencode brand stripped, tool guidance preserved, original turn intact.
+RESULT: PASS — billing/identity/system layout aligned, brand stripped, original conversation unchanged.
 --- PASS: TestHarnessOpencodeRealistic (0.00s)
 PASS
-ok  	github.com/cyonsun/cliproxy-plugin-opencode-cloak	0.008s
+ok  	github.com/conversun/cliproxy-plugin-opencode-cloak	0.007s

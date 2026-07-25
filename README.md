@@ -1,34 +1,48 @@
 # opencode-cloak
 
-A [CLIProxyAPI](https://github.com/) plugin that makes third-party `opencode` CLI requests look like Anthropic's official Claude Code, so a Claude Max OAuth subscription proxied through CLIProxyAPI is not flagged as third-party traffic.
+A [CLIProxyAPI](https://github.com/) plugin that makes third-party `opencode` CLI requests look like Anthropic's official Claude Code, so a Claude Max OAuth subscription proxied through CLIProxyAPI is not flagged as third-party traffic — **while preserving opencode's own system prompt**.
 
 opencode-cloak is a Go C-ABI plugin with the `request_interceptor` capability. It hooks `request.intercept_after`, which runs after auth selection and before the executor's native cloaking step.
+
+It preserves opencode's own system prompt while aligning its layout with the current `opencode-anthropic-auth` strategy. CLIProxyAPI still owns the outgoing device headers, fake user-id, sensitive-word obfuscation, and final-body `cch` re-signing.
 
 ## How it works
 
 When the plugin detects an opencode request, it performs three transformations:
 
-1. **Surgically sanitizes the opencode system prompt.** It strips the "You are OpenCode" identity paragraph and any paragraphs containing opencode URLs, rewrites two classifier-trigger phrases, and preserves everything else. The rest of the prompt survives untouched.
+1. **Surgically sanitizes the opencode system prompt.** It strips the "You are OpenCode" identity paragraph and any paragraphs containing opencode URLs, rewrites two classifier-trigger phrases, and preserves everything else.
 
-2. **Relocates the sanitized prompt.** The cleaned prompt moves into a user/assistant message pair at the front of `messages`.
+2. **Keeps the sanitized prompt in `system`.** Original system blocks retain their order and metadata (including `cache_control`). The conversation in `messages` is not modified.
 
-3. **Replaces `system`.** The `system` field becomes:
+3. **Prepends the Claude fingerprint blocks.** The final system layout is:
 
-   ```
-   [ <x-anthropic-billing-header block>, "You are Claude Code, Anthropic's official CLI for Claude." ]
-   ```
+```
+[ <x-anthropic-billing-header>, "You are Claude Code, Anthropic's official CLI for Claude.", <sanitized original blocks...> ]
+```
 
-Putting the billing header at `system[0]` makes CLIProxyAPI's native cloaking step aside: it detects the header prefix and skips its own (otherwise destructive) system-prompt replacement. Native cloaking still applies afterward: fake user-id, sensitive-word obfuscation, device-profile User-Agent, and OAuth request signing.
+Putting the billing header at `system[0]` makes CLIProxyAPI's native system-prompt replacement step aside. Native processing still injects the fake user-id, applies the outgoing Claude device profile, and re-signs `cch` over the final upstream body.
+
+### Division of labor
+
+| Concern | Owner |
+|---|---|
+| Sanitize and preserve opencode's system blocks | **this plugin** |
+| Billing-header version, suffix, and entrypoint | **this plugin** (must match the host tuple) |
+| `cch` signing over the final body | native (re-signs for OAuth requests) |
+| Fake user-id, device User-Agent, sensitive-word obfuscation | native |
+
+This deployment uses the CLI tuple observed from CLIProxyAPIPlus: `claude-cli/2.1.63 (external, cli)`, `X-App: cli`, `cc_version=2.1.63.*`, and `cc_entrypoint=cli`.
 
 ## Activation gates
 
-The plugin transforms a request only when **all** of the following hold. Otherwise the request passes through unchanged.
+The plugin transforms a request only when **all** of the following hold. Otherwise the request passes through unchanged (and native cloaks it normally).
 
 1. Both the request source format and the target format are `claude`.
 2. `system[0]` is not already a billing header (the transform is idempotent).
 3. The request is not a real Claude Code request.
-4. The model does not start with `claude-3-5-haiku`.
+4. The model does not start with `claude-3-5-haiku` (native skips cloaking there too, so the plugin must not strip the prompt).
 5. There is positive opencode evidence: the client User-Agent matches the configured opencode UA pattern, or a system paragraph contains the exact text "You are OpenCode".
+6. The request has a user message from which a valid billing header can be derived.
 
 Gate 5 matters. A stray opencode URL or merely "not Claude Code" is not enough to trigger the transform. Cherry Studio, Cline, generic SDKs, and other third-party clients are left untouched.
 
@@ -49,15 +63,15 @@ plugins:
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `claude_code_version` | string | `"2.1.63"` | Claude Code version stamped into `x-anthropic-billing-header` (`cc_version`). MUST match the version CLIProxyAPI emits in its outgoing `User-Agent` (Claude device profile); if they drift, the fingerprint becomes internally inconsistent. The default matches CLIProxyAPI's default device profile. |
-| `entrypoint` | string | `"cli"` | The `cc_entrypoint` value. `cli` matches the outgoing `claude-cli/… (external, cli)` UA and `X-App: cli`. Use `sdk-cli` only to reproduce claude-relay-service / opencode-anthropic-auth reference vectors. |
+| `claude_code_version` | string | `"2.1.63"` | Version used in the billing header. It must match CLIProxyAPI's final outgoing Claude CLI User-Agent. |
+| `entrypoint` | string | `"cli"` | Billing-header entrypoint. Use `cli` with CLIProxyAPI's current `X-App: cli` tuple. |
 | `opencode_ua_regex` | string | `"(?i)^opencode/"` | Regex identifying an opencode client by User-Agent. An invalid regex falls back to the default. |
 
 ## Caveats
 
-**Version coupling.** `claude_code_version` must stay in lockstep with the Claude Code version CLIProxyAPI advertises in its device-profile User-Agent. If CLIProxyAPI bumps its device profile and you don't bump this setting (or vice versa), the request fingerprint contradicts itself.
+**Version coupling.** `claude_code_version` must match the final outgoing Claude CLI User-Agent emitted by CLIProxyAPI. A mismatch creates an internally contradictory fingerprint. Check the upstream request log after host upgrades.
 
-**`cch` re-signing.** On OAuth message requests, CLIProxyAPI re-signs the billing header's `cch` field itself (a seeded hash over the final body), so the plugin's `cch` is authoritative only for `count_tokens`. The durable value of this plugin is the surgical system-prompt preservation (native cloaking would otherwise replace the whole opencode prompt with a 3-line stub) plus the `cc_version`/suffix/`cc_entrypoint` fingerprint.
+**No entitlement guarantee.** This layout improves consistency and follows the current upstream auth-plugin direction, but Anthropic can still classify OpenCode or agent frameworks as third-party traffic. Disable this plugin to fall back to native cloaking if plan-limit compatibility is more important than prompt fidelity.
 
 ## Install
 

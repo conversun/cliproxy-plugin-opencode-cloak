@@ -13,10 +13,9 @@ import (
 const cchSalt = "59cf53e54c78"
 
 var (
-	cchPositions        = [3]int{4, 7, 20}
-	versionPattern      = regexp.MustCompile(`^\d{1,4}(?:\.\d{1,4}){1,3}$`)
-	entrypointPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-	claudeCodeUAPattern = regexp.MustCompile(`(?i)^claude-cli/(\d{1,4}(?:\.\d{1,4}){1,3}) \(external, cli\)$`)
+	cchPositions      = [3]int{4, 7, 20}
+	versionPattern    = regexp.MustCompile(`^\d{1,4}(?:\.\d{1,4}){1,3}$`)
+	entrypointPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 )
 
 func computeCCH(text string) string {
@@ -30,11 +29,6 @@ func computeVersionSuffix(text, version string) string {
 	}
 
 	units := utf16.Encode([]rune(text))
-	// Collect the sampled code units first, then decode ONCE. JavaScript builds
-	// the sampled string by concatenating raw UTF-16 code units (text[i]), so a
-	// sampled high surrogate immediately followed by a sampled low surrogate
-	// recombines into a single code point before the UTF-8 hash. Decoding each
-	// unit independently would instead emit two U+FFFD and diverge from JS.
 	sampled := make([]uint16, 0, len(cchPositions))
 	for _, position := range cchPositions {
 		if position < len(units) {
@@ -47,18 +41,6 @@ func computeVersionSuffix(text, version string) string {
 
 	sum := sha256.Sum256([]byte(cchSalt + chars + version))
 	return hex.EncodeToString(sum[:])[:3]
-}
-
-func extractClaudeCodeVersionFromUserAgent(userAgent string) string {
-	if strings.TrimSpace(userAgent) == "" {
-		return ""
-	}
-
-	match := claudeCodeUAPattern.FindStringSubmatch(userAgent)
-	if match == nil {
-		return ""
-	}
-	return match[1]
 }
 
 func extractFirstUserMessageText(messages gjson.Result) string {
@@ -85,9 +67,8 @@ func extractFirstUserMessageText(messages gjson.Result) string {
 			if block.Get("type").String() != "text" {
 				return true
 			}
-
 			candidate := block.Get("text")
-			if candidate.Type == gjson.String && candidate.String() != "" {
+			if candidate.Type == gjson.String {
 				text = candidate.String()
 			}
 			return false
@@ -98,14 +79,12 @@ func extractFirstUserMessageText(messages gjson.Result) string {
 }
 
 func buildBillingHeaderValue(messages gjson.Result, version, entrypoint string) string {
-	if strings.TrimSpace(version) == "" || !versionPattern.MatchString(version) ||
-		strings.TrimSpace(entrypoint) == "" || !entrypointPattern.MatchString(entrypoint) {
+	if !versionPattern.MatchString(strings.TrimSpace(version)) ||
+		!entrypointPattern.MatchString(strings.TrimSpace(entrypoint)) {
 		return ""
 	}
 
 	text := extractFirstUserMessageText(messages)
-	suffix := computeVersionSuffix(text, version)
-	cch := computeCCH(text)
-	return "x-anthropic-billing-header: cc_version=" + version + "." + suffix +
-		"; cc_entrypoint=" + entrypoint + "; cch=" + cch + ";"
+	return "x-anthropic-billing-header: cc_version=" + version + "." + computeVersionSuffix(text, version) +
+		"; cc_entrypoint=" + entrypoint + "; cch=" + computeCCH(text) + ";"
 }
