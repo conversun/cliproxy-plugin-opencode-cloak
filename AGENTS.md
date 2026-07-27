@@ -70,14 +70,16 @@ Single test: `go test -run TestName -v`. There is no lint tool beyond `gofmt` + 
 - `extractFirstUserMessageText` returns the first `type:"text"` block of the first `user` message —
   skipping leading non-text blocks but **not** skipping an empty text block. This asymmetry is
   intentional reference-implementation parity and is test-locked.
-- `versionPattern` / `entrypointPattern` in `cch.go` exist to block header injection through config
-  (`version: "2.1.87;cc_entrypoint=attacker"`). Do not relax them.
+- `versionPattern` / `entrypointPattern` in `cch.go` are defense-in-depth against billing-header
+  injection (`version: "2.1.87;cc_entrypoint=attacker"`). Do not relax them.
 
 ## Version coupling
 
-The Claude CLI version lives in **two** places that must stay in sync: `defaultConfig()` in
-`transform.go` and the three mentions in `README.md`. It must also match the outgoing Claude CLI
-User-Agent that the CLIProxyAPI host emits — a mismatch produces a self-contradictory fingerprint.
+The fallback Claude CLI User-Agent lives in `defaultClaudeCodeUserAgent` in `transform.go` and the
+documented default in `README.md`. Production configuration should define
+`plugins.configs.opencode-cloak.claude_code_user_agent` with a YAML anchor and reuse that anchor for
+`claude-header-defaults.user-agent`, so the plugin and host consume one value. A mismatch produces a
+self-contradictory fingerprint.
 Separately, `Metadata.Version` in `main.go` (`pluginRegistration`) is hand-maintained and is *not*
 derived from the git tag that triggers a release.
 
