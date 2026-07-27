@@ -20,8 +20,30 @@ env:
   PLUGIN_ID: opencode-cloak
 
 jobs:
+  # gofmt/vet/test run once on ubuntu, where the checkout keeps LF line
+  # endings. Running gofmt per-platform would fail on the Windows runner,
+  # whose autocrlf checkout rewrites every file to CRLF and makes gofmt -l
+  # list all of them.
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt, vet, test
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+          go vet ./...
+          go test ./... -count=1
+
   build:
     name: Build ${{ matrix.os }}/${{ matrix.arch }}
+    needs: test
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -71,13 +93,6 @@ jobs:
           echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
           echo "LIB_NAME=${PLUGIN_ID}.${{ matrix.ext }}" >> "${GITHUB_ENV}"
           echo "ARCHIVE_NAME=${PLUGIN_ID}_${VERSION}_${{ matrix.os }}_${{ matrix.arch }}.zip" >> "${GITHUB_ENV}"
-
-      - name: Verify (gofmt, vet, test)
-        run: |
-          set -euo pipefail
-          test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
-          go vet ./...
-          go test ./... -count=1
 
       - name: Build shared library
         run: |

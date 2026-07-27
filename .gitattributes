@@ -1,0 +1,14 @@
+# Force LF on checkout for all text files, on every platform. Without this the
+# Windows release runner checks out Go source with CRLF (core.autocrlf), and the
+# `gofmt -l .` gate then flags every file as unformatted, failing the build.
+* text=auto eol=lf
+
+# Explicit for the source and tooling that must stay LF.
+*.go   text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf
+LICENSE  text eol=lf
