@@ -58,6 +58,17 @@ func TestPluginRegister_satisfiesHostValidPluginContract(t *testing.T) {
 		t.Fatalf("capabilities.request_interceptor must be true, else the host registers no capability")
 	}
 
+	configFields := make(map[string]bool, len(reg.Metadata.ConfigFields))
+	for _, field := range reg.Metadata.ConfigFields {
+		configFields[field.Name] = true
+	}
+	if !configFields["claude_code_user_agent"] {
+		t.Fatal("registration must expose claude_code_user_agent")
+	}
+	if configFields["claude_code_version"] || configFields["entrypoint"] {
+		t.Fatal("registration must not expose separately synchronized version or entrypoint fields")
+	}
+
 	// The plugin must not advertise a newer schema than the host supports.
 	if reg.SchemaVersion > pluginabi.SchemaVersion {
 		t.Fatalf("schema_version %d exceeds host SchemaVersion %d", reg.SchemaVersion, pluginabi.SchemaVersion)

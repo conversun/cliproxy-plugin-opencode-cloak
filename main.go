@@ -62,9 +62,8 @@ type lifecycleRequest struct {
 }
 
 type pluginConfig struct {
-	ClaudeCodeVersion string `yaml:"claude_code_version"`
-	Entrypoint        string `yaml:"entrypoint"`
-	OpencodeUARegex   string `yaml:"opencode_ua_regex"`
+	ClaudeCodeUserAgent string `yaml:"claude_code_user_agent"`
+	OpencodeUARegex     string `yaml:"opencode_ua_regex"`
 }
 
 type registration struct {
@@ -156,11 +155,9 @@ func configure(raw []byte) error {
 	}
 
 	resolved := defaultConfig()
-	if version := strings.TrimSpace(cfg.ClaudeCodeVersion); version != "" {
-		resolved.version = version
-	}
-	if entrypoint := strings.TrimSpace(cfg.Entrypoint); entrypoint != "" {
-		resolved.entrypoint = entrypoint
+	if identity, ok := parseClaudeCodeUserAgent(cfg.ClaudeCodeUserAgent); ok {
+		resolved.version = identity.version
+		resolved.entrypoint = identity.entrypoint
 	}
 	if pattern := strings.TrimSpace(cfg.OpencodeUARegex); pattern != "" {
 		compiled, errCompile := regexp.Compile(pattern)
@@ -185,14 +182,9 @@ func pluginRegistration() registration {
 			Logo:             "",
 			ConfigFields: []pluginapi.ConfigField{
 				{
-					Name:        "claude_code_version",
+					Name:        "claude_code_user_agent",
 					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Claude Code version used in the billing header; must match CLIProxyAPI's outgoing User-Agent.",
-				},
-				{
-					Name:        "entrypoint",
-					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Billing-header entrypoint; use cli with CLIProxyAPI's current X-App and User-Agent tuple.",
+					Description: "Canonical Claude Code User-Agent shared with CLIProxyAPI's claude-header-defaults.user-agent.",
 				},
 				{
 					Name:        "opencode_ua_regex",

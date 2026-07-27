@@ -25,12 +25,17 @@ var currentConfig atomic.Pointer[resolvedConfig]
 
 const claudeCodeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
 
+const (
+	defaultClaudeCodeUserAgent = "claude-cli/2.1.63 (external, cli)"
+)
+
 // defaultConfig returns the built-in configuration used before any host
 // configuration is applied or when a user-supplied value is invalid.
 func defaultConfig() resolvedConfig {
+	identity, _ := parseClaudeCodeUserAgent(defaultClaudeCodeUserAgent)
 	return resolvedConfig{
-		version:    "2.1.63",
-		entrypoint: "cli",
+		version:    identity.version,
+		entrypoint: identity.entrypoint,
 		opencodeUA: regexp.MustCompile("(?i)^opencode/"),
 	}
 }
@@ -108,7 +113,7 @@ func transformInterceptAfter(req pluginapi.RequestInterceptRequest, cfg resolved
 
 	userAgent := headerGet(req.Headers, "User-Agent")
 	// A genuine Claude Code request already looks correct — leave it alone.
-	if extractClaudeCodeVersionFromUserAgent(userAgent) != "" && systemContainsText(system, claudeCodeSystemPrompt) {
+	if _, ok := parseClaudeCodeUserAgent(userAgent); ok && systemContainsText(system, claudeCodeSystemPrompt) {
 		return nil, false
 	}
 
