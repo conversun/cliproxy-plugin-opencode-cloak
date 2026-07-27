@@ -76,6 +76,14 @@ type registrationCapability struct {
 	RequestInterceptor bool `json:"request_interceptor"`
 }
 
+// pluginVersion is the plugin's release version. CI injects the git tag with
+// -ldflags "-X main.pluginVersion=<version>" so the tag is the single source of
+// truth: the CLIProxyAPI plugin store derives a plugin's version from the
+// release tag, and a hand-maintained constant here would silently drift from it.
+// Untagged builds keep the "0.0.0-dev" placeholder, which is still non-empty and
+// therefore satisfies the host's validPlugin() metadata check.
+var pluginVersion = "0.0.0-dev"
+
 func main() {}
 
 //export cliproxy_plugin_init
@@ -176,7 +184,7 @@ func pluginRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             "opencode-cloak",
-			Version:          "0.2.0",
+			Version:          pluginVersion,
 			Author:           "conversun",
 			GitHubRepository: "https://github.com/conversun/cliproxy-plugin-opencode-cloak",
 			Logo:             "",

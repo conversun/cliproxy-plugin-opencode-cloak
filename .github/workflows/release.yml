@@ -1,19 +1,33 @@
 name: Release
 
+# Produces the release layout the CLIProxyAPI plugin store installer requires:
+# one <id>_<version>_<goos>_<goarch>.zip per platform plus a single
+# checksums.txt. The installer matches asset names exactly (ArchiveName) and
+# aborts when checksums.txt is missing, so this workflow IS the store contract.
+#
+# workflow_dispatch builds and uploads the artifacts WITHOUT publishing a
+# release, so the packaging can be dry-run before a tag is burned.
+
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  PLUGIN_ID: opencode-cloak
+
 jobs:
   build:
+    name: Build ${{ matrix.os }}/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             os: linux
             arch: amd64
             ext: so
@@ -21,15 +35,21 @@ jobs:
             os: linux
             arch: arm64
             ext: so
-          - runner: macos-latest
+          - runner: macos-15
             os: darwin
             arch: arm64
             ext: dylib
-          - runner: macos-13
+          - runner: macos-15-intel
             os: darwin
             arch: amd64
             ext: dylib
-    runs-on: ${{ matrix.runner }}
+          - runner: windows-2025
+            os: windows
+            arch: amd64
+            ext: dll
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -37,14 +57,93 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build shared library (native ${{ matrix.os }}/${{ matrix.arch }})
+      - name: Resolve release metadata
         run: |
-          out="opencode-cloak-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.ext }}"
-          CGO_ENABLED=1 go build -buildmode=c-shared -o "$out" .
-          ls -la "$out"
+          set -euo pipefail
+          # The store derives the version from the release tag and rejects a
+          # version with a leading "v"; untagged dispatch builds use a
+          # placeholder that still satisfies the host validPlugin() check.
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+          echo "LIB_NAME=${PLUGIN_ID}.${{ matrix.ext }}" >> "${GITHUB_ENV}"
+          echo "ARCHIVE_NAME=${PLUGIN_ID}_${VERSION}_${{ matrix.os }}_${{ matrix.arch }}.zip" >> "${GITHUB_ENV}"
 
-      - name: Upload to release
-        uses: softprops/action-gh-release@v2
+      - name: Verify (gofmt, vet, test)
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+          go vet ./...
+          go test ./... -count=1
+
+      - name: Build shared library
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # CGO is mandatory for -buildmode=c-shared; cross-compiling this
+          # plugin fails in runtime/cgo, hence one native runner per platform.
+          # The tag is injected as main.pluginVersion so the registered
+          # metadata version always matches the release.
+          CGO_ENABLED=1 GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} \
+            go build -trimpath -buildmode=c-shared \
+              -ldflags "-s -w -X main.pluginVersion=${VERSION}" \
+              -o "dist/${LIB_NAME}" .
+          # The cgo-generated header must not enter the archive: the installer
+          # rejects an archive that contains anything but the one library.
+          rm -f "dist/${PLUGIN_ID}.h"
+
+      - name: Package plugin
+        run: |
+          set -euo pipefail
+          go run ./.github/scripts/package-release.go \
+            -library "dist/${LIB_NAME}" \
+            -archive "${ARCHIVE_NAME}" \
+            -checksum "${ARCHIVE_NAME}.sha256"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: opencode-cloak-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.ext }}
-          fail_on_unmatched_files: true
+          name: ${{ env.ARCHIVE_NAME }}
+          path: |
+            ${{ env.ARCHIVE_NAME }}
+            ${{ env.ARCHIVE_NAME }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Release
+    # Only a tag publishes; a workflow_dispatch run stops after building.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Assemble checksums.txt
+        run: |
+          set -euo pipefail
+          # ParseChecksums reads sha256sum format, one line per archive.
+          sort dist/*.sha256 > dist/checksums.txt
+          cat dist/checksums.txt
+          ls -la dist/
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/*.zip dist/checksums.txt --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/checksums.txt \
+              --verify-tag \
+              --title "${GITHUB_REF_NAME}" \
+              --notes "Automated release for ${GITHUB_REF_NAME}."
+          fi

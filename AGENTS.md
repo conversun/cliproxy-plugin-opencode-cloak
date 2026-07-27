@@ -26,9 +26,11 @@ Single test: `go test -run TestName -v`. There is no lint tool beyond `gofmt` + 
 
 - **CGO is mandatory** (`CGO_ENABLED=1`); `make build` relies on the default being on.
 - **Cross-compilation does not work.** `GOOS=linux go build` on macOS fails in `runtime/cgo`. Release
-  artifacts come from a 4-runner matrix in `.github/workflows/release.yml` (linux/darwin × amd64/arm64),
-  triggered by a `v*` tag. Never try to produce another platform's `.so`/`.dylib` locally.
-- `bin/` is gitignored; `bin/opencode-cloak.h` is cgo-generated output, not source.
+  artifacts come from a 5-runner matrix in `.github/workflows/release.yml` (linux/darwin × amd64/arm64
+  plus windows/amd64), triggered by a `v*` tag. Never try to produce another platform's library locally.
+- `bin/` is gitignored; `bin/opencode-cloak.h` is cgo-generated output, not source. The release build
+  likewise `rm`s the generated `.h` before packaging — the store installer rejects an archive that
+  carries anything but the single dynamic library.
 
 ## File map
 
@@ -39,6 +41,7 @@ Single test: `go test -run TestName -v`. There is no lint tool beyond `gofmt` + 
 | `cloaking.go` | Paragraph-level sanitizer for opencode system text |
 | `cch.go` | Billing-header construction: `cch` hash + version suffix |
 | `useragent.go` | Canonical Claude Code User-Agent detection (gate only) |
+| `.github/scripts/package-release.go` | `//go:build ignore` CI packager: wraps the built library in the plugin-store zip layout (`<id>_<ver>_<goos>_<goarch>.zip`, lib at zip root) and emits its `sha256sum` line |
 
 ## Host contract invariants (breaking these fails silently in production)
 
@@ -80,8 +83,12 @@ documented default in `README.md`. Production configuration should define
 `plugins.configs.opencode-cloak.claude_code_user_agent` with a YAML anchor and reuse that anchor for
 `claude-header-defaults.user-agent`, so the plugin and host consume one value. A mismatch produces a
 self-contradictory fingerprint.
-Separately, `Metadata.Version` in `main.go` (`pluginRegistration`) is hand-maintained and is *not*
-derived from the git tag that triggers a release.
+Separately, `Metadata.Version` in `main.go` (`pluginRegistration`) reads the `pluginVersion` package
+variable, which defaults to `"0.0.0-dev"` and is overridden at release-build time via
+`-ldflags "-X main.pluginVersion=<tag-without-v>"`. The git tag is the single source of truth: the
+CLIProxyAPI plugin store also derives a plugin's version from the release tag, so do **not** hardcode a
+version here. `registration_test.go` asserts the value matches the store's version pattern
+(`^[0-9][0-9A-Za-z.+-]*$`) rather than a literal, so an untagged `0.0.0-dev` build still passes.
 
 ## Testing conventions
 

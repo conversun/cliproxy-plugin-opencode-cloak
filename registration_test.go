@@ -12,11 +12,17 @@ package main
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 )
+
+// storePluginVersionPattern mirrors pluginVersionPattern in CLIProxyAPI's
+// internal/pluginstore/registry.go. The plugin store rejects any release whose
+// version fails this check, so the registration metadata must satisfy it too.
+var storePluginVersionPattern = regexp.MustCompile(`^[0-9][0-9A-Za-z.+-]*$`)
 
 func TestPluginRegister_satisfiesHostValidPluginContract(t *testing.T) {
 	raw, err := handleMethod(pluginabi.MethodPluginRegister, nil)
@@ -52,8 +58,13 @@ func TestPluginRegister_satisfiesHostValidPluginContract(t *testing.T) {
 			t.Fatalf("Metadata.%s is empty; host validPlugin() would reject the plugin as invalid metadata", field)
 		}
 	}
-	if reg.Metadata.Version != "0.2.0" {
-		t.Fatalf("Metadata.Version = %q, want release version %q", reg.Metadata.Version, "0.2.0")
+
+	// The plugin store derives the version from the git release tag and validates
+	// it against pluginVersionPattern (internal/pluginstore/registry.go). CI injects
+	// the tag via -ldflags, so assert the shape rather than a literal: a hardcoded
+	// version here would silently drift from the tag that actually ships.
+	if !storePluginVersionPattern.MatchString(reg.Metadata.Version) {
+		t.Fatalf("Metadata.Version = %q does not match plugin store pattern %s", reg.Metadata.Version, storePluginVersionPattern)
 	}
 
 	// Host validPlugin() also requires at least one declared capability.

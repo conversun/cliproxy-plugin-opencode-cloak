@@ -76,24 +76,45 @@ claude-header-defaults:
 
 ## Install
 
-### Option A - Prebuilt binary (recommended)
+### Option A - Plugin store (recommended)
 
-Every release ships prebuilt shared libraries built by CI for common platforms:
-`opencode-cloak-linux-amd64.so`, `opencode-cloak-linux-arm64.so`,
-`opencode-cloak-darwin-arm64.dylib`, `opencode-cloak-darwin-amd64.dylib`.
+This plugin is listed in the [official CLIProxyAPI plugin store](https://github.com/router-for-me/CLIProxyAPI-Plugins-Store).
+Install it through the management API, which downloads the platform archive from
+this repo's GitHub Releases, verifies its `sha256`, and drops the library into
+`plugins.dir` for you:
+
+```bash
+curl -X POST \
+  "http://127.0.0.1:8080/v0/management/plugin-store/opencode-cloak/install?source=official" \
+  -H "Authorization: Bearer $CLIPROXY_MANAGEMENT_KEY"
+```
+
+The store resolves the latest release tag as the version, so re-running the
+install (or the management panel's update action) picks up new releases with no
+manual download. Then enable it (see [Enable it](#enable-it)).
+
+### Option B - Prebuilt archive
+
+Every release ships a per-platform zip plus a `checksums.txt`, named the way the
+store installer expects:
+`opencode-cloak_<version>_linux_amd64.zip`, `..._linux_arm64.zip`,
+`..._darwin_arm64.zip`, `..._darwin_amd64.zip`, `..._windows_amd64.zip`.
 
 Download the one matching your server from the
 [Releases page](https://github.com/conversun/cliproxy-plugin-opencode-cloak/releases),
-rename it to `opencode-cloak.<ext>` (keep the basename `opencode-cloak` - it becomes the
-plugin ID), and place it in the directory named by `plugins.dir`:
+unzip it (the archive contains a single `opencode-cloak.<ext>` at its root - keep
+that basename, it becomes the plugin ID), and place the library in the directory
+named by `plugins.dir`:
 
 ```bash
 mkdir -p /opt/cliproxy/plugins
-curl -L -o /opt/cliproxy/plugins/opencode-cloak.so \
-  https://github.com/conversun/cliproxy-plugin-opencode-cloak/releases/latest/download/opencode-cloak-linux-amd64.so
+ver=0.2.1   # match the release tag without the leading v
+curl -L -o /tmp/opencode-cloak.zip \
+  "https://github.com/conversun/cliproxy-plugin-opencode-cloak/releases/download/v${ver}/opencode-cloak_${ver}_linux_amd64.zip"
+unzip -o /tmp/opencode-cloak.zip -d /opt/cliproxy/plugins
 ```
 
-### Option B - Build from source
+### Option C - Build from source
 
 No local CLIProxyAPI checkout is required: the plugin depends on the **public** SDK module
 (`github.com/router-for-me/CLIProxyAPI/v7`), so a plain build works anywhere (Go 1.26+, CGO enabled):
@@ -109,7 +130,7 @@ library on the **same OS/arch** as the host that loads it.
 
 ### Enable it
 
-1. Place the library in the directory named by `plugins.dir` (basename stays `opencode-cloak`).
+1. Install via the store (Option A places the library for you), or drop the library into the directory named by `plugins.dir` (basename stays `opencode-cloak`).
 2. Set `plugins.enabled: true`.
 3. Enable it under `plugins.configs.opencode-cloak` (see Configuration).
 
