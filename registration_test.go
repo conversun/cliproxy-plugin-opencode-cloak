@@ -52,6 +52,9 @@ func TestPluginRegister_satisfiesHostValidPluginContract(t *testing.T) {
 			t.Fatalf("Metadata.%s is empty; host validPlugin() would reject the plugin as invalid metadata", field)
 		}
 	}
+	if reg.Metadata.Version != "0.2.0" {
+		t.Fatalf("Metadata.Version = %q, want release version %q", reg.Metadata.Version, "0.2.0")
+	}
 
 	// Host validPlugin() also requires at least one declared capability.
 	if !reg.Capabilities.RequestInterceptor {

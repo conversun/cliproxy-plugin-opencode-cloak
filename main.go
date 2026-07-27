@@ -176,7 +176,7 @@ func pluginRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             "opencode-cloak",
-			Version:          "0.1.0",
+			Version:          "0.2.0",
 			Author:           "conversun",
 			GitHubRepository: "https://github.com/conversun/cliproxy-plugin-opencode-cloak",
 			Logo:             "",
