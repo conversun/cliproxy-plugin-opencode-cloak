@@ -31,7 +31,7 @@ Putting the billing header at `system[0]` makes CLIProxyAPI's native system-prom
 | `cch` signing over the final body | native (re-signs for OAuth requests) |
 | Fake user-id, device User-Agent, sensitive-word obfuscation | native |
 
-This deployment uses the CLI tuple observed from CLIProxyAPIPlus: `claude-cli/2.1.63 (external, cli)`, `X-App: cli`, `cc_version=2.1.63.*`, and `cc_entrypoint=cli`.
+The current production tuple is `claude-cli/2.1.220 (external, sdk-cli)`, `X-App: cli`, `cc_version=2.1.220.*`, and `cc_entrypoint=sdk-cli`.
 
 ## Activation gates
 
@@ -56,20 +56,21 @@ plugins:
     opencode-cloak:
       enabled: true
       priority: 1
-      claude_code_version: "2.1.63"
-      entrypoint: "cli"
+      claude_code_user_agent: &claude_code_ua "claude-cli/2.1.220 (external, sdk-cli)"
       opencode_ua_regex: "(?i)^opencode/"
+
+claude-header-defaults:
+  user-agent: *claude_code_ua
 ```
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `claude_code_version` | string | `"2.1.63"` | Version used in the billing header. It must match CLIProxyAPI's final outgoing Claude CLI User-Agent. |
-| `entrypoint` | string | `"cli"` | Billing-header entrypoint. Use `cli` with CLIProxyAPI's current `X-App: cli` tuple. |
+| `claude_code_user_agent` | string | `"claude-cli/2.1.63 (external, cli)"` | Canonical Claude Code User-Agent. Define the YAML anchor here and reuse it for `claude-header-defaults.user-agent` so both components consume one value. |
 | `opencode_ua_regex` | string | `"(?i)^opencode/"` | Regex identifying an opencode client by User-Agent. An invalid regex falls back to the default. |
 
 ## Caveats
 
-**Version coupling.** `claude_code_version` must match the final outgoing Claude CLI User-Agent emitted by CLIProxyAPI. A mismatch creates an internally contradictory fingerprint. Check the upstream request log after host upgrades.
+**User-Agent coupling.** Keep the YAML anchor inside `plugins.configs.opencode-cloak` as shown above, then reference it from `claude-header-defaults.user-agent`. CLIProxyAPI serializes the plugin subtree independently, so defining the anchor under `claude-header-defaults` would leave the plugin with an unresolved alias.
 
 **No entitlement guarantee.** This layout improves consistency and follows the current upstream auth-plugin direction, but Anthropic can still classify OpenCode or agent frameworks as third-party traffic. Disable this plugin to fall back to native cloaking if plan-limit compatibility is more important than prompt fidelity.
 
