@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="opencode-cloak">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#252C3A"/>
+      <stop offset="100%" stop-color="#191E28"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="38%" r="60%">
+      <stop offset="0%" stop-color="#DD7A5F" stop-opacity="0.34"/>
+      <stop offset="65%" stop-color="#DD7A5F" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#DD7A5F" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="116" fill="url(#tile)"/>
+  <rect width="512" height="512" rx="116" fill="url(#glow)"/>
+
+  <!-- cloak: a domino / bandit mask = the disguise -->
+  <g>
+    <rect x="104" y="112" width="304" height="116" rx="58" fill="#DD7A5F"/>
+    <rect x="70" y="162" width="46" height="18" rx="9" fill="#DD7A5F"/>
+    <rect x="396" y="162" width="46" height="18" rx="9" fill="#DD7A5F"/>
+    <ellipse cx="197" cy="170" rx="33" ry="23" fill="#191E28" transform="rotate(-10 197 170)"/>
+    <ellipse cx="315" cy="170" rx="33" ry="23" fill="#191E28" transform="rotate(10 315 170)"/>
+  </g>
+
+  <!-- the cloaked identity: a terminal prompt -->
+  <g fill="none" stroke="#F4ECE1" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="174,300 220,346 174,392"/>
+    <line x1="250" y1="392" x2="356" y2="392"/>
+  </g>
+</svg>
