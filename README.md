@@ -4,7 +4,34 @@ A [CLIProxyAPI](https://github.com/) plugin that makes third-party `opencode` CL
 
 opencode-cloak is a Go C-ABI plugin with the `request_interceptor` capability. It hooks `request.intercept_after`, which runs after auth selection and before the executor's native cloaking step.
 
-It preserves opencode's own system prompt while aligning its layout with the current `opencode-anthropic-auth` strategy. CLIProxyAPI still owns the outgoing device headers, fake user-id, sensitive-word obfuscation, and final-body `cch` re-signing.
+It preserves opencode's own system prompt while aligning its layout with the current `opencode-anthropic-auth` strategy. Everything else about the outgoing request — transport headers, request-level identity fields, body normalization, and the final `cch` signature — stays with CLIProxyAPI's native pipeline.
+
+## Why this exists
+
+In January 2026 Anthropic stopped honoring Claude Pro/Max subscription OAuth tokens outside its own
+first-party clients. The Claude Code docs now draw the line explicitly: OAuth tokens are for
+Anthropic's own products, and third-party harnesses belong on an API key.
+
+- [Anthropic — Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
+- [HN — Anthropic blocks third-party use of Claude Code subscriptions](https://news.ycombinator.com/item?id=46549823)
+
+Enforcement was not only categorical, it was also name-specific. A published reproduction script
+showed that, under a subscription OAuth token, a request whose second system block read
+`You are OpenCode` was rejected, while `You are Cursor`, `You are Pi`, and `You are Droid` in the
+same position all succeeded. The discriminator was the opencode identity string sitting in the
+prompt — not the shape of the request around it.
+
+- [`anthropic-screws-opencode.ts` — reproduction script](https://gist.github.com/R44VC0RP/bd391f6a23185c0fed6c6b5fb2bac50e)
+- [HN — Anthropic Explicitly Blocking OpenCode](https://news.ycombinator.com/item?id=46625918)
+- [HN — Anthropic takes legal action against OpenCode](https://news.ycombinator.com/item?id=47444748)
+
+That specific string check has been reported as no longer reproducing since March 2026, but the
+broader subscription restriction stands, and the episode set the design constraint for this plugin.
+
+CLIProxyAPI's built-in answer is to drop opencode's system prompt and substitute Claude Code's. That
+clears the gate, but it also discards the prompt that makes opencode behave like opencode — its tool
+discipline, its editing rules, its output conventions. This plugin takes the narrower route: remove
+only the paragraphs that carry the opencode identity, and leave the rest of the prompt intact.
 
 ## How it works
 
@@ -20,7 +47,7 @@ When the plugin detects an opencode request, it performs three transformations:
 [ <x-anthropic-billing-header>, "You are Claude Code, Anthropic's official CLI for Claude.", <sanitized original blocks...> ]
 ```
 
-Putting the billing header at `system[0]` makes CLIProxyAPI's native system-prompt replacement step aside. Native processing still injects the fake user-id, applies the outgoing Claude device profile, and re-signs `cch` over the final upstream body.
+Putting the billing header at `system[0]` makes CLIProxyAPI's native system-prompt replacement step aside. The rest of the native pipeline still runs: it applies the outgoing Claude client profile and re-signs `cch` over the final upstream body.
 
 ### Division of labor
 
@@ -29,7 +56,7 @@ Putting the billing header at `system[0]` makes CLIProxyAPI's native system-prom
 | Sanitize and preserve opencode's system blocks | **this plugin** |
 | Billing-header version, suffix, and entrypoint | **this plugin** (must match the host tuple) |
 | `cch` signing over the final body | native (re-signs for OAuth requests) |
-| Fake user-id, device User-Agent, sensitive-word obfuscation | native |
+| Outgoing client profile, request-level identity fields, body normalization | native |
 
 The current production tuple is `claude-cli/2.1.220 (external, sdk-cli)`, `X-App: cli`, `cc_version=2.1.220.*`, and `cc_entrypoint=sdk-cli`.
 
