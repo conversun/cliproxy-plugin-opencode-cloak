@@ -48,6 +48,8 @@ Gate 5 matters. A stray opencode URL or merely "not Claude Code" is not enough t
 
 ## Configuration
 
+The plugin runs with just `enabled: true`; every other field is optional.
+
 ```yaml
 plugins:
   enabled: true
@@ -55,22 +57,20 @@ plugins:
   configs:
     opencode-cloak:
       enabled: true
-      priority: 1
       claude_code_user_agent: &claude_code_ua "claude-cli/2.1.220 (external, sdk-cli)"
-      opencode_ua_regex: "(?i)^opencode/"
 
 claude-header-defaults:
-  user-agent: *claude_code_ua
+  user-agent: *claude_code_ua   # same value as the plugin's claude_code_user_agent
 ```
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `claude_code_user_agent` | string | `"claude-cli/2.1.63 (external, cli)"` | Canonical Claude Code User-Agent. Define the YAML anchor here and reuse it for `claude-header-defaults.user-agent` so both components consume one value. |
-| `opencode_ua_regex` | string | `"(?i)^opencode/"` | Regex identifying an opencode client by User-Agent. An invalid regex falls back to the default. |
+| `claude_code_user_agent` | string | `"claude-cli/2.1.63 (external, cli)"` | Optional. Claude Code identity (version + entrypoint) the plugin writes into the billing header. If you override it, set `claude-header-defaults.user-agent` to the same value. |
+| `opencode_ua_regex` | string | `"(?i)^opencode/"` | Optional. Regex that flags a client as opencode by its User-Agent. Invalid regex falls back to the default. |
 
 ## Caveats
 
-**User-Agent coupling.** Keep the YAML anchor inside `plugins.configs.opencode-cloak` as shown above, then reference it from `claude-header-defaults.user-agent`. CLIProxyAPI serializes the plugin subtree independently, so defining the anchor under `claude-header-defaults` would leave the plugin with an unresolved alias.
+**Keep the fingerprint consistent.** The plugin reads only `claude_code_user_agent`, using it to build the billing header. The host's `claude-header-defaults.user-agent` sets the outgoing HTTP User-Agent — match the two or the upstream request contradicts itself. If you use a YAML anchor, declare it inside `plugins.configs.opencode-cloak`: CLIProxyAPI serializes the plugin subtree on its own, so an anchor declared under `claude-header-defaults` won't resolve for the plugin.
 
 **No entitlement guarantee.** This layout improves consistency and follows the current upstream auth-plugin direction, but Anthropic can still classify OpenCode or agent frameworks as third-party traffic. Disable this plugin to fall back to native cloaking if plan-limit compatibility is more important than prompt fidelity.
 
